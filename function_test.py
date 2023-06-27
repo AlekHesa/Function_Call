@@ -4,10 +4,15 @@ import requests
 from tenacity import retry,wait_random_exponential,stop_after_attempt
 from termcolor import colored
 from dotenv import dotenv_values
-import streamlit as st
+import sqlparse
 import pandas as pd
+import re
+import streamlit as st
+import plotly.graph_objects as go
+import psycopg2
 import json
 from streamlit_modal import Modal
+
 
 import sqlite3
 
@@ -47,13 +52,17 @@ class Conversation:
 
 
 sql_convo=Conversation()
-
+chart = st.radio("Choose Chart",("Bar Chart","Pie Chart"))
 if st.button('Ask Question') :
 
     conn = sqlite3.connect("data\chinook.db")
     st.write("Database Succesfully Opened")
     print ("Database Sucesfully Opened")
    
+  
+
+
+
 
     def chat_completion_request(messages:list,functions=None,model = GPT_MODEL):
         if functions is not None:
@@ -111,7 +120,7 @@ if st.button('Ask Question') :
     functionsa = [
         {
             "name":"ask_database",
-            "description":"Use this function to answer the user questions about the database . Output should be a fully formed SQL query.",
+            "description":"Use this function to answer the user questions about the database . Output should be a fully formed SQL query and give it an alias if the columns if it using join function.",
             "parameters":{
                 "type":"object",
                 "properties":{
@@ -173,11 +182,48 @@ if st.button('Ask Question') :
         if full_messages["message"]["function_call"]["name"] == "ask_database":
             query = eval(full_messages["message"]["function_call"]["arguments"])
             print(f"prepped query is {query}")
-            # st.write(query)
-            df=pd.read_sql_query(query["query"],conn)
-            # st.dataframe(df )
-            # st.dataframe(df)
-            # st.bar_chart(dataframe)
+            
+              # Your generated SQL query
+
+            # Extract column names and aliases from the SQL query
+            pattern = r"SELECT\s+(.*?)\s+FROM"
+            matches = re.search(pattern, query["query"], re.IGNORECASE)
+            if matches:
+                columns_with_aliases = [column.strip() for column in matches.group(1).split(",")]
+
+            # Create a DataFrame from the SQL query
+            df = pd.read_sql_query(query["query"], conn)
+
+            # Modify column names and aliases based on extracted values
+            new_columns = []
+            for column_with_alias in columns_with_aliases:
+                parts = column_with_alias.split(" AS ")
+                column_name = parts[0].strip().split(".")[-1] if "." in parts[0] else parts[0].strip()
+                alias = parts[1].strip() if len(parts) > 1 else column_name
+                new_columns.append(alias)
+
+            df.columns = new_columns
+
+            # Extract x and y column names from DataFrame
+            x_column = new_columns[0]
+            y_column = new_columns[1]
+
+
+            # Create bar chart using Plotly
+            if chart == "Bar Chart":
+                fig = go.Figure(data=[go.Bar(x=df[x_column], y=df[y_column])])
+            elif chart == "Pie Chart":
+                fig = go.Figure(data=[go.Pie(labels=df[x_column], values=df[y_column])])
+                 # Update x and y axis labels
+
+
+            fig.update_xaxes(title=x_column)
+            fig.update_yaxes(title=y_column)
+
+            # Display the chart using Streamlit
+            # st.plotly_chart(fig)
+            st.plotly_chart(fig)
+
             try:
                 results = ask_database(conn,query["query"])
                 # st.write(results)
